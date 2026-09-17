@@ -92,7 +92,6 @@ android {
             initWith(getByName("debug"))
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-dev${providers.gradleProperty("devBuildNumber").orElse("local").get()}"
-            resValue("string", "app_name", "Jellyfin Dev")
             signingConfig = signingConfigs.findByName("dev") ?: signingConfigs.getByName("debug")
             matchingFallbacks += listOf("debug")
         }
