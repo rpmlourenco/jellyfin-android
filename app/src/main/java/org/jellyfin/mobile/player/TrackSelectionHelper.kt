@@ -74,14 +74,20 @@ class TrackSelectionHelper(
         }
 
         val player = viewModel.playerOrNull ?: return false
-        val embeddedStreamIndex = mediaSource.getEmbeddedStreamIndex(audioStream)
-        val sortedTrackGroups = player.currentTracks.groups.sortedBy { group ->
-            val formatId = group.mediaTrackGroup.getFormat(0).id
+        val embeddedAudioStreamIndex = mediaSource.audioStreams
+            .filterNot(MediaStream::isExternal)
+            .indexOf(audioStream)
+        if (embeddedAudioStreamIndex < 0) return false
 
-            // Sort by format ID, but pad number string with zeroes to ensure proper sorting
-            formatId?.toIntOrNull()?.let { id -> "%05d".format(id) } ?: formatId
-        }
-        val audioGroup = sortedTrackGroups.getOrNull(embeddedStreamIndex) ?: return false
+        val sortedAudioTrackGroups = player.currentTracks.groups
+            .filter { group -> group.type == C.TRACK_TYPE_AUDIO }
+            .sortedBy { group ->
+                val formatId = group.mediaTrackGroup.getFormat(0).id
+
+                // Sort by format ID, but pad number string with zeroes to ensure proper sorting
+                formatId?.toIntOrNull()?.let { id -> "%05d".format(id) } ?: formatId
+            }
+        val audioGroup = sortedAudioTrackGroups.getOrNull(embeddedAudioStreamIndex) ?: return false
 
         return trackSelector.selectTrackByTypeAndGroup(C.TRACK_TYPE_AUDIO, audioGroup.mediaTrackGroup)
     }

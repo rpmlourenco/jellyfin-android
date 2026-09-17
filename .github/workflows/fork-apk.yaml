@@ -1,0 +1,77 @@
+name: Fork / Build dev APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/exoplayer-audio-language
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build dev${{ github.run_number }} APK
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version-file: .tools-versions
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+
+      - name: Restore persistent dev signing key
+        env:
+          DEV_KEYSTORE_BASE64: ${{ secrets.DEV_KEYSTORE_BASE64 }}
+        run: |
+          printf '%s' "$DEV_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/jellyfin-dev.jks"
+          chmod 600 "$RUNNER_TEMP/jellyfin-dev.jks"
+
+      - name: Build proprietary dev APK
+        env:
+          DEV_KEYSTORE_PATH: ${{ runner.temp }}/jellyfin-dev.jks
+          DEV_KEYSTORE_PASSWORD: ${{ secrets.DEV_KEYSTORE_PASSWORD }}
+          DEV_KEY_ALIAS: ${{ secrets.DEV_KEY_ALIAS }}
+          DEV_KEY_PASSWORD: ${{ secrets.DEV_KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleProprietaryDev \
+            -PdevBuildNumber=${{ github.run_number }} \
+            -PdevVersionCode=${{ github.run_number }}
+
+      - name: Stage APK
+        shell: bash
+        run: |
+          mkdir -p build/fork-apk
+          cp app/build/outputs/apk/proprietary/dev/*.apk \
+            "build/fork-apk/jellyfin-v2.7.3-dev${{ github.run_number }}.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: jellyfin-v2.7.3-dev${{ github.run_number }}
+          retention-days: 30
+          if-no-files-found: error
+          path: build/fork-apk/*.apk
+
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@62c96d0c4e8a889135c1f3a25910db8dbe0e85f7 # v2.3.4
+        with:
+          tag_name: v2.7.3-dev${{ github.run_number }}
+          name: Jellyfin v2.7.3-dev${{ github.run_number }}
+          body: |
+            Test build for the integrated-player audio language selection fix.
+
+            Application ID: `org.jellyfin.mobile.debug`
+            This build installs alongside the official Jellyfin app and updates earlier dev builds.
+          files: build/fork-apk/*.apk
+          prerelease: true
