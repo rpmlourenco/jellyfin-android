@@ -23,7 +23,7 @@ class TrackSelectionHelper(
         val mediaSource = mediaSourceOrNull ?: return
 
         mediaSource.selectedAudioStream?.let { stream ->
-            selectPlayerAudioTrack(mediaSource, stream, initial = true)
+            selectPlayerAudioTrack(mediaSource, stream)
         }
         selectSubtitleTrack(mediaSource, mediaSource.selectedSubtitleStream, initial = true)
     }
@@ -44,7 +44,7 @@ class TrackSelectionHelper(
             return viewModel.queueManager.selectAudioStreamAndRestartPlayback(selectedMediaStream)
         }
 
-        return selectPlayerAudioTrack(mediaSource, selectedMediaStream, initial = false).also { success ->
+        return selectPlayerAudioTrack(mediaSource, selectedMediaStream).also { success ->
             if (success) viewModel.logTracks()
         }
     }
@@ -52,25 +52,21 @@ class TrackSelectionHelper(
     /**
      * Select the audio track in the player.
      *
-     * @param initial whether this is an initial selection and checks for re-selection should be skipped.
      * @see selectPlayerAudioTrack
      */
     @Suppress("ReturnCount")
     private fun selectPlayerAudioTrack(
         mediaSource: JellyfinMediaSource,
         audioStream: MediaStream,
-        initial: Boolean,
     ): Boolean {
         if (mediaSource.playMethod == PlayMethod.TRANSCODE) {
             // Transcoding does not require explicit audio selection
             return true
         }
 
-        when {
-            // Fast-pass: Skip execution on subsequent calls with the correct selection or if only one track exists
-            mediaSource.audioStreams.size == 1 || !initial && audioStream === mediaSource.selectedAudioStream -> return true
-            // Apply selection in media source, abort on failure
-            !mediaSource.selectAudioStream(audioStream) -> return false
+        // With only one track, update the media source without creating an unnecessary player override.
+        if (mediaSource.audioStreams.size == 1) {
+            return mediaSource.selectAudioStream(audioStream)
         }
 
         val player = viewModel.playerOrNull ?: return false
@@ -82,12 +78,31 @@ class TrackSelectionHelper(
         val sortedAudioTrackGroups = player.currentTracks.groups
             .filter { group -> group.type == C.TRACK_TYPE_AUDIO }
             .sortedBy { group ->
-                val formatId = group.mediaTrackGroup.getFormat(0).id
-
-                // Sort by format ID, but pad number string with zeroes to ensure proper sorting
-                formatId?.toIntOrNull()?.let { id -> "%05d".format(id) } ?: formatId
+                naturalTrackIdSortKey(group.mediaTrackGroup.getFormat(0).id)
             }
-        val audioGroup = sortedAudioTrackGroups.getOrNull(embeddedAudioStreamIndex) ?: return false
+
+        // Matroska track IDs exposed by Media3 are not guaranteed to be plain sequential numbers.
+        // Prefer stable metadata when it uniquely identifies a group, then fall back to stream order.
+        val labelMatchedGroup = audioStream.displayTitle?.let { displayTitle ->
+            sortedAudioTrackGroups.singleOrNull { group ->
+                group.mediaTrackGroup.getFormat(0).label?.let { label ->
+                    displayTitle.contains(label, ignoreCase = true)
+                } == true
+            }
+        }
+        val languageMatchedGroup = normalizeLanguage(audioStream.language)?.let { language ->
+            sortedAudioTrackGroups.singleOrNull { group ->
+                normalizeLanguage(group.mediaTrackGroup.getFormat(0).language) == language
+            }
+        }
+        val audioGroup = labelMatchedGroup
+            ?: languageMatchedGroup
+            ?: sortedAudioTrackGroups.getOrNull(embeddedAudioStreamIndex)
+            ?: return false
+
+        // Only expose the new selection after a matching ExoPlayer group was found. This also allows
+        // selecting the same stream again to reapply an override that did not take effect previously.
+        if (!mediaSource.selectAudioStream(audioStream)) return false
 
         return trackSelector.selectTrackByTypeAndGroup(C.TRACK_TYPE_AUDIO, audioGroup.mediaTrackGroup)
     }
@@ -201,3 +216,15 @@ class TrackSelectionHelper(
         return mediaSourceOrNull?.selectedSubtitleStream != null
     }
 }
+
+private val TRACK_ID_NUMBER = Regex("\\d+")
+
+internal fun naturalTrackIdSortKey(formatId: String?): String = formatId.orEmpty().replace(TRACK_ID_NUMBER) { match ->
+    match.value.padStart(10, '0')
+}
+
+private fun normalizeLanguage(language: String?): String? = language
+    ?.trim()
+    ?.lowercase()
+    ?.takeIf { it.isNotEmpty() && it != "und" }
+    ?.take(2)
