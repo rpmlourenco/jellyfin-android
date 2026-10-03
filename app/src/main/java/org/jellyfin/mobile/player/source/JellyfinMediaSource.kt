@@ -21,6 +21,7 @@ sealed class JellyfinMediaSource(
     val sourceInfo: MediaSourceInfo,
     val playSessionId: String,
     playbackDetails: PlaybackDetails?,
+    additionalMediaStreams: List<MediaStream> = emptyList(),
 ) {
     val id: String = requireNotNull(sourceInfo.id) { "Media source has no id" }
 
@@ -29,7 +30,7 @@ sealed class JellyfinMediaSource(
     var startTime: Duration = playbackDetails?.startTime ?: Duration.ZERO
     val runTime: Duration = sourceInfo.runTimeTicks?.ticks ?: Duration.ZERO
 
-    val mediaStreams: List<MediaStream> = sourceInfo.mediaStreams.orEmpty()
+    val mediaStreams: List<MediaStream> = sourceInfo.mediaStreams.orEmpty() + additionalMediaStreams
     val audioStreams: List<MediaStream>
     val subtitleStreams: List<MediaStream>
     val externalSubtitleStreams: List<ExternalSubtitleStream>
