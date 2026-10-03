@@ -2,6 +2,7 @@ package org.jellyfin.mobile.player.queue
 
 import android.net.Uri
 import androidx.annotation.CheckResult
+import androidx.documentfile.provider.DocumentFile
 import androidx.core.net.toUri
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -11,10 +12,13 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.jellyfin.mobile.app.StorageManager
 import org.jellyfin.mobile.data.dao.DownloadDao
 import org.jellyfin.mobile.downloads.DownloadFileType
+import org.jellyfin.mobile.downloads.getDownloadSubtitleFileNames
 import org.jellyfin.mobile.player.PlayerException
 import org.jellyfin.mobile.player.PlayerViewModel
+import org.jellyfin.mobile.player.deviceprofile.CodecHelpers
 import org.jellyfin.mobile.player.deviceprofile.DeviceProfileBuilder
 import org.jellyfin.mobile.player.interaction.PlayOptions
 import org.jellyfin.mobile.player.interaction.PlayerWebPreferences
@@ -49,6 +53,7 @@ class QueueManager(
     private val mediaSourceResolver: MediaSourceResolver by inject()
     private val deviceProfileBuilder: DeviceProfileBuilder by inject()
     private val downloadDao: DownloadDao by inject()
+    private val storageManager: StorageManager by inject()
     private val deviceProfile = deviceProfileBuilder.getDeviceProfile()
 
     private var currentQueue: List<UUID> = emptyList()
@@ -126,11 +131,18 @@ class QueueManager(
         }
 
         val mainFile = files.find { it.type == DownloadFileType.ITEM } ?: return PlayerException.NetworkFailure()
+        val sourceInfo = download.item.mediaSources!!.first()
+        val localSubtitleConfigurations = createDownloadSubtitleConfigurations(
+            sourceInfo = sourceInfo,
+            mainFileName = mainFile.fileName,
+            downloadPath = download.path,
+            files = files,
+        )
 
         val mediaSource = LocalJellyfinMediaSource(
             itemId = download.itemId,
             item = download.item,
-            sourceInfo = download.item.mediaSources!!.first(),
+            sourceInfo = sourceInfo,
             playSessionId = download.id.toString(),
             playbackDetails = PlaybackDetails(startTime, audioStreamIndex, subtitleStreamIndex),
             remoteFileUri = mainFile.uri,
@@ -142,7 +154,7 @@ class QueueManager(
         _currentMediaSource.value = mediaSource
 
         // Load new media source
-        viewModel.load(mediaSource, prepareStreams(mediaSource), playWhenReady)
+        viewModel.load(mediaSource, prepareStreams(mediaSource, localSubtitleConfigurations), playWhenReady)
 
         return null
     }
@@ -323,8 +335,11 @@ class QueueManager(
      * a [MergingMediaSource] containing the mentioned media stream and all external subtitle streams.
      */
     @CheckResult
-    private fun prepareStreams(source: LocalJellyfinMediaSource): MediaSource {
-        return createDownloadVideoMediaSource(source.id, source.remoteFileUri)
+    private fun prepareStreams(
+        source: LocalJellyfinMediaSource,
+        subtitleConfigurations: List<MediaItem.SubtitleConfiguration> = createDownloadSubtitleConfigurations(source),
+    ): MediaSource {
+        return createDownloadVideoMediaSource(source.id, source.remoteFileUri, subtitleConfigurations)
     }
 
     private fun prepareStreams(source: RemoteJellyfinMediaSource): MediaSource {
@@ -422,14 +437,69 @@ class QueueManager(
         }.toList()
     }
 
+    private fun createDownloadSubtitleConfigurations(
+        source: LocalJellyfinMediaSource,
+    ): List<MediaItem.SubtitleConfiguration> {
+        val download = downloadDao.getDownloadByItemId(source.itemId) ?: return emptyList()
+        val files = downloadDao.getFiles(download.id)
+        val mainFile = files.find { it.type == DownloadFileType.ITEM } ?: return emptyList()
+        return createDownloadSubtitleConfigurations(source.sourceInfo, mainFile.fileName, download.path, files)
+    }
+
+    private fun createDownloadSubtitleConfigurations(
+        sourceInfo: org.jellyfin.sdk.model.api.MediaSourceInfo,
+        mainFileName: String,
+        downloadPath: String,
+        files: List<org.jellyfin.mobile.data.entity.DownloadFileEntity>,
+    ): List<MediaItem.SubtitleConfiguration> {
+        val itemLocation = storageManager.findDirectory(downloadPath)
+        val fileNames = getDownloadSubtitleFileNames(mainFileName, sourceInfo.mediaStreams.orEmpty())
+        val baseName = mainFileName.substringBeforeLast('.', mainFileName)
+        val externalSrtStreams = sourceInfo.mediaStreams.orEmpty().filter { stream ->
+            stream.type == MediaStreamType.SUBTITLE &&
+                stream.isExternal &&
+                stream.codec?.lowercase() in setOf("srt", "subrip")
+        }
+
+        return externalSrtStreams.mapNotNull { stream ->
+            val mimeType = CodecHelpers.getSubtitleMimeType(stream.codec) ?: return@mapNotNull null
+            val expectedName = fileNames[stream.index] ?: return@mapNotNull null
+
+            val trackedFile = files.firstOrNull {
+                it.type == DownloadFileType.SUBTITLE && it.fileName.equals(expectedName, ignoreCase = true)
+            }
+            val trackedDocument = trackedFile
+                ?.let { DocumentFile.fromSingleUri(viewModel.getApplication(), it.uri) }
+                ?.takeIf(DocumentFile::exists)
+
+            val localFile = trackedDocument
+                ?: itemLocation?.findFile(expectedName)
+                ?: itemLocation?.findFile("$baseName.srt")
+
+            if (localFile == null || !localFile.exists()) return@mapNotNull null
+
+            MediaItem.SubtitleConfiguration.Builder(localFile.uri).apply {
+                setId("${ExternalSubtitleStream.ID_PREFIX}${stream.index}")
+                setLabel(stream.displayTitle.orEmpty())
+                setMimeType(mimeType)
+                setLanguage(stream.language)
+            }.build()
+        }
+    }
+
     @CheckResult
-    private fun createDownloadVideoMediaSource(mediaSourceId: String, fileUri: Uri): MediaSource {
+    private fun createDownloadVideoMediaSource(
+        mediaSourceId: String,
+        fileUri: Uri,
+        subtitleConfigurations: List<MediaItem.SubtitleConfiguration>,
+    ): MediaSource {
         val factory: MediaSource.Factory = get()
 
         val mediaItem = MediaItem.Builder()
             .setMediaId(mediaSourceId)
             .setUri(fileUri)
             .setCustomCacheKey(fileUri.toString())
+            .setSubtitleConfigurations(subtitleConfigurations)
             .build()
 
         return factory.createMediaSource(mediaItem)
