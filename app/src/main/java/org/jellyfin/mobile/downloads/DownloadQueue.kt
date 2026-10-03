@@ -197,13 +197,18 @@ class DownloadQueue(
         downloadWithFiles: DownloadFiles,
         itemLocation: DocumentFile
     ): QueuedFile? = downloadWithFiles.download.item.imageTags?.get(ImageType.PRIMARY)?.let { imageTag ->
+        val mainFileName = downloadWithFiles.download.item.path
+            ?.replace(Regex("^.*[\\\\/]"), "")
+            ?: downloadWithFiles.download.item.id.toString()
+        val imageFileName = "${mainFileName.substringBeforeLast('.', mainFileName)}.primary.webp"
+
         QueuedFile(
             file = createOrUpdateFile(
                 filter = { it.type == DownloadFileType.IMAGE_PRIMARY },
                 downloadWithFiles = downloadWithFiles,
                 itemLocation = itemLocation,
                 type = DownloadFileType.IMAGE_PRIMARY,
-                fileName = "primary.webp",
+                fileName = imageFileName,
             ),
             remoteUri = api.imageApi.getItemImageUrl(
                 itemId = downloadWithFiles.download.item.id,
@@ -223,9 +228,28 @@ class DownloadQueue(
     ): DownloadFileEntity {
         var downloadFile = downloadWithFiles.files.firstOrNull(filter)
 
-        val file = itemLocation.findFile(fileName)
+        val existingFile = itemLocation.findFile(fileName)
+        val file = existingFile
             ?: itemLocation.createFile("", fileName)
             ?: error("Unable to create file $fileName")
+
+        if (
+            downloadFile == null &&
+            existingFile != null &&
+            existingFile.exists() &&
+            existingFile.length() > 0L
+        ) {
+            downloadFile = DownloadFileEntity(
+                downloadId = downloadWithFiles.download.id,
+                type = type,
+                size = existingFile.length(),
+                fileName = fileName,
+                uri = existingFile.uri,
+                status = DownloadStatus.DOWNLOADED,
+            )
+            val id = downloadDao.insertFile(downloadFile)
+            return downloadFile.copy(id = id)
+        }
 
         if (
             downloadFile != null &&
