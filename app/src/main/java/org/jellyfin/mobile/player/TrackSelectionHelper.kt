@@ -118,15 +118,6 @@ class TrackSelectionHelper(
         val selectedMediaStream = mediaSource.mediaStreams.firstOrNull { it.index == mediaStreamIndex }
         require(selectedMediaStream == null || selectedMediaStream.type == MediaStreamType.SUBTITLE)
 
-        // Local external subtitles are rebuilt into the MediaItem and marked as the default selection
-        // on restart. This is more reliable for content:// sidecars than applying a live track override.
-        if (
-            mediaSource is LocalJellyfinMediaSource &&
-            (selectedMediaStream?.isExternal == true || mediaSource.selectedSubtitleStream?.isExternal == true)
-        ) {
-            return viewModel.queueManager.selectSubtitleStreamAndRestartPlayback(selectedMediaStream)
-        }
-
         // If the selected subtitle stream requires encoding or the current subtitle is baked into the stream,
         // we need to restart playback.
         if (
@@ -192,45 +183,17 @@ class TrackSelectionHelper(
             }
 
             SubtitleDeliveryMethod.EXTERNAL -> {
-                val textGroups = player.currentTracks.groups
-                    .filter { group -> group.type == C.TRACK_TYPE_TEXT }
-
-                // Prefer the explicit ID assigned to the SubtitleConfiguration. Media3 may decorate
-                // or omit this ID for local content:// sidecars, so do not rely on it exclusively.
-                val idMatch = textGroups.firstOrNull { group ->
-                    val formatId = group.getTrackFormat(0).id ?: return@firstOrNull false
-                    val prefixIndex = formatId.indexOf(ExternalSubtitleStream.ID_PREFIX)
-                    prefixIndex >= 0 &&
-                        formatId.substring(prefixIndex) == "${ExternalSubtitleStream.ID_PREFIX}${subtitleStream.index}"
-                }
-
-                val labelMatch = subtitleStream.displayTitle
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { title ->
-                        textGroups.singleOrNull { group ->
-                            group.getTrackFormat(0).label?.equals(title, ignoreCase = true) == true
-                        }
-                    }
-
-                val languageMatch = normalizeLanguage(subtitleStream.language)?.let { language ->
-                    textGroups.singleOrNull { group ->
-                        normalizeLanguage(group.getTrackFormat(0).language) == language
+                // For external subtitles, we can simply match the ID that we set when creating the player media source.
+                for (group in player.currentTracks.groups) {
+                    val formatId = group.getTrackFormat(0).id ?: continue
+                    val originalFormatPrefixIndex = formatId.indexOf(ExternalSubtitleStream.ID_PREFIX)
+                    if (originalFormatPrefixIndex < 0) continue
+                    val originalFormatId = formatId.substring(originalFormatPrefixIndex)
+                    if (originalFormatId == "${ExternalSubtitleStream.ID_PREFIX}${subtitleStream.index}") {
+                        return trackSelector.selectTrackByTypeAndGroup(C.TRACK_TYPE_TEXT, group.mediaTrackGroup)
                     }
                 }
-
-                val externalIndex = mediaSource.subtitleStreams
-                    .filter(MediaStream::isExternal)
-                    .indexOfFirst { it.index == subtitleStream.index }
-                val orderMatch = if (externalIndex >= 0) {
-                    // External sidecars are appended by Media3 after embedded subtitle groups.
-                    textGroups.takeLast(mediaSource.subtitleStreams.count(MediaStream::isExternal))
-                        .getOrNull(externalIndex)
-                } else {
-                    null
-                }
-
-                val subtitleGroup = idMatch ?: labelMatch ?: languageMatch ?: orderMatch ?: return false
-                return trackSelector.selectTrackByTypeAndGroup(C.TRACK_TYPE_TEXT, subtitleGroup.mediaTrackGroup)
+                return false
             }
 
             else -> return false
