@@ -153,7 +153,10 @@ val applicationModule = module {
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
             .setCacheWriteDataSinkFactory(null)
             .setCacheKeyFactory { spec ->
-                spec.key ?: spec.uri.extractId()
+                spec.key ?: when (spec.uri.scheme) {
+                    "content", "file" -> spec.uri.toString()
+                    else -> runCatching { spec.uri.extractId() }.getOrElse { spec.uri.toString() }
+                }
             }
     }
 
