@@ -118,8 +118,17 @@ class TrackSelectionHelper(
         val selectedMediaStream = mediaSource.mediaStreams.firstOrNull { it.index == mediaStreamIndex }
         require(selectedMediaStream == null || selectedMediaStream.type == MediaStreamType.SUBTITLE)
 
+        // Local external subtitles are rebuilt into the MediaItem and marked as the default selection
+        // on restart. This is more reliable for content:// sidecars than applying a live track override.
+        if (
+            mediaSource is LocalJellyfinMediaSource &&
+            (selectedMediaStream?.isExternal == true || mediaSource.selectedSubtitleStream?.isExternal == true)
+        ) {
+            return viewModel.queueManager.selectSubtitleStreamAndRestartPlayback(selectedMediaStream)
+        }
+
         // If the selected subtitle stream requires encoding or the current subtitle is baked into the stream,
-        // we need to restart playback
+        // we need to restart playback.
         if (
             selectedMediaStream?.deliveryMethod == SubtitleDeliveryMethod.ENCODE ||
             mediaSource.selectedSubtitleStream?.deliveryMethod == SubtitleDeliveryMethod.ENCODE
