@@ -111,7 +111,7 @@ sealed class JellyfinMediaSource(
      */
     fun selectAudioStream(stream: MediaStream): Boolean {
         require(stream.type == MediaStreamType.AUDIO)
-        if (mediaStreams[stream.index] !== stream) {
+        if (mediaStreams.firstOrNull { it.index == stream.index } !== stream) {
             return false
         }
 
@@ -132,7 +132,7 @@ sealed class JellyfinMediaSource(
         }
 
         require(stream.type == MediaStreamType.SUBTITLE)
-        if (mediaStreams[stream.index] !== stream) {
+        if (mediaStreams.firstOrNull { it.index == stream.index } !== stream) {
             return false
         }
 
