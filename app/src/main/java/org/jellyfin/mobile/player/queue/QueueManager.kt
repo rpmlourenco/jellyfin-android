@@ -37,6 +37,7 @@ import org.jellyfin.sdk.model.api.MediaStream
 import org.jellyfin.sdk.model.api.MediaStreamProtocol
 import org.jellyfin.sdk.model.api.MediaStreamType
 import org.jellyfin.sdk.model.api.PlayMethod
+import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
 import org.jellyfin.sdk.model.serializer.toUUIDOrNull
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
@@ -132,7 +133,7 @@ class QueueManager(
 
         val mainFile = files.find { it.type == DownloadFileType.ITEM } ?: return PlayerException.NetworkFailure()
         val sourceInfo = download.item.mediaSources!!.first()
-        val localSubtitleConfigurations = createDownloadSubtitleConfigurations(
+        val localSubtitles = createDownloadSubtitleData(
             sourceInfo = sourceInfo,
             mainFileName = mainFile.fileName,
             downloadPath = download.path,
@@ -146,7 +147,8 @@ class QueueManager(
             playSessionId = download.id.toString(),
             playbackDetails = PlaybackDetails(startTime, audioStreamIndex, subtitleStreamIndex),
             remoteFileUri = mainFile.uri,
-            localSubtitleConfigurations = localSubtitleConfigurations,
+            localSubtitleConfigurations = localSubtitles.configurations,
+            additionalMediaStreams = localSubtitles.additionalStreams,
         )
         startTime?.let { duration -> mediaSource.startTime = duration }
         audioStreamIndex?.let { index -> mediaSource.selectAudioStream(mediaSource.audioStreams[index]) }
@@ -439,12 +441,17 @@ class QueueManager(
         }.toList()
     }
 
-    private fun createDownloadSubtitleConfigurations(
+    private data class LocalSubtitleData(
+        val configurations: List<MediaItem.SubtitleConfiguration>,
+        val additionalStreams: List<MediaStream>,
+    )
+
+    private fun createDownloadSubtitleData(
         sourceInfo: org.jellyfin.sdk.model.api.MediaSourceInfo,
         mainFileName: String,
         downloadPath: String,
         files: List<org.jellyfin.mobile.data.entity.DownloadFileEntity>,
-    ): List<MediaItem.SubtitleConfiguration> {
+    ): LocalSubtitleData {
         val itemLocation = storageManager.findDirectory(downloadPath)
         val fileNames = getDownloadSubtitleFileNames(mainFileName, sourceInfo.mediaStreams.orEmpty())
         val baseName = mainFileName.substringBeforeLast('.', mainFileName)
@@ -453,10 +460,12 @@ class QueueManager(
                 stream.isExternal &&
                 stream.codec?.lowercase() in setOf("srt", "subrip")
         }
+        val configurations = mutableListOf<MediaItem.SubtitleConfiguration>()
+        val usedUris = mutableSetOf<Uri>()
 
-        return externalSrtStreams.mapNotNull { stream ->
-            val mimeType = CodecHelpers.getSubtitleMimeType(stream.codec) ?: return@mapNotNull null
-            val expectedName = fileNames[stream.index] ?: return@mapNotNull null
+        for (stream in externalSrtStreams) {
+            val mimeType = CodecHelpers.getSubtitleMimeType(stream.codec) ?: continue
+            val expectedName = fileNames[stream.index] ?: continue
 
             val trackedFile = files.firstOrNull {
                 it.type == DownloadFileType.SUBTITLE && it.fileName.equals(expectedName, ignoreCase = true)
@@ -467,17 +476,46 @@ class QueueManager(
 
             val localFile = trackedDocument
                 ?: itemLocation?.findFile(expectedName)
-                ?: itemLocation?.findFile("$baseName.srt")
+                ?: itemLocation?.findFile("$baseName.srt")?.takeIf { it.uri !in usedUris }
+                ?: continue
 
-            if (localFile == null || !localFile.exists()) return@mapNotNull null
-
-            MediaItem.SubtitleConfiguration.Builder(localFile.uri).apply {
+            usedUris += localFile.uri
+            configurations += MediaItem.SubtitleConfiguration.Builder(localFile.uri).apply {
                 setId("${ExternalSubtitleStream.ID_PREFIX}${stream.index}")
                 setLabel(stream.displayTitle.orEmpty())
                 setMimeType(mimeType)
                 setLanguage(stream.language)
             }.build()
         }
+
+        val additionalStreams = mutableListOf<MediaStream>()
+        val sameNameSidecar = itemLocation?.findFile("$baseName.srt")
+        if (sameNameSidecar != null && sameNameSidecar.exists() && sameNameSidecar.uri !in usedUris) {
+            val streamIndex = sourceInfo.mediaStreams.orEmpty().size
+            additionalStreams += MediaStream(
+                codec = "srt",
+                language = null,
+                displayTitle = "SRT",
+                isInterlaced = false,
+                isDefault = false,
+                isForced = false,
+                isHearingImpaired = false,
+                isOriginal = false,
+                type = MediaStreamType.SUBTITLE,
+                index = streamIndex,
+                isExternal = true,
+                deliveryMethod = SubtitleDeliveryMethod.EXTERNAL,
+                isTextSubtitleStream = true,
+                supportsExternalStream = true,
+            )
+            configurations += MediaItem.SubtitleConfiguration.Builder(sameNameSidecar.uri).apply {
+                setId("${ExternalSubtitleStream.ID_PREFIX}$streamIndex")
+                setLabel("SRT")
+                setMimeType(MimeTypes.APPLICATION_SUBRIP)
+            }.build()
+        }
+
+        return LocalSubtitleData(configurations, additionalStreams)
     }
 
     @CheckResult
