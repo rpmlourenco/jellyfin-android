@@ -11,6 +11,8 @@ import org.jellyfin.mobile.data.entity.ServerEntity
 import org.jellyfin.mobile.data.entity.UserEntity
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.itemsApi
+import org.jellyfin.sdk.model.api.BaseItemDto
+import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ItemFields
 import java.util.UUID
 
@@ -58,6 +60,7 @@ class DownloadManager(
                     // this will force the download worker to recheck the local file in case it is missing or changed
                     downloadEntity = downloadEntity.copy(
                         item = item,
+                        path = buildDownloadPath(item),
                         status = DownloadStatus.QUEUED,
                         modifiedAt = System.currentTimeMillis(),
                     )
@@ -69,7 +72,7 @@ class DownloadManager(
                         userId = user.id,
                         itemId = item.id,
                         item = item,
-                        path = item.name ?: item.id.toString(),
+                        path = buildDownloadPath(item),
                     )
                     downloadDao.insert(downloadEntity)
                 }
@@ -80,6 +83,21 @@ class DownloadManager(
             DownloadWorker.start(context, appPreferences)
         }
     }
+
+    private fun buildDownloadPath(item: BaseItemDto): String {
+        val itemFolder = sanitizePathComponent(item.name ?: item.id.toString())
+        if (item.type != BaseItemKind.EPISODE || item.seriesName.isNullOrBlank()) return itemFolder
+
+        val seriesFolder = sanitizePathComponent(item.seriesName!!)
+        val seasonFolder = item.parentIndexNumber
+            ?.let { season -> "Season ${season.toString().padStart(2, '0')}" }
+            ?: "Season"
+
+        return "$seriesFolder/$seasonFolder/$itemFolder"
+    }
+
+    private fun sanitizePathComponent(value: String): String =
+        value.replace(Regex("""[\\/:*?"<>|]"""), "_").trim().ifEmpty { "Unknown" }
 
     suspend fun resume(downloadEntity: DownloadEntity) = withContext(Dispatchers.IO) {
         downloadDao.update(
@@ -113,8 +131,7 @@ class DownloadManager(
         }
 
         if (deleteFiles) {
-            val storageLocation = storageManager.getStorageLocation()
-            storageLocation?.findFile(download.path)?.delete()
+            storageManager.findDirectory(download.path)?.delete()
         }
     }
 }
