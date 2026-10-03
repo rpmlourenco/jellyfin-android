@@ -34,7 +34,7 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionName = project.getVersionName()
-        versionCode = getVersionCode(versionName!!)
+        versionCode = providers.gradleProperty("devVersionCode").orNull?.toIntOrNull() ?: getVersionCode(versionName!!)
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
@@ -51,6 +51,20 @@ android {
                 storePassword = keystorePassword
                 keyAlias = signingKeyAlias
                 keyPassword = signingKeyPassword
+            }
+        }
+
+        val devKeystoreFile = System.getenv("DEV_KEYSTORE_PATH")
+        val devKeystorePassword = System.getenv("DEV_KEYSTORE_PASSWORD")
+        val devKeyAlias = System.getenv("DEV_KEY_ALIAS")
+        val devKeyPassword = System.getenv("DEV_KEY_PASSWORD")
+
+        if (devKeystoreFile != null && devKeystorePassword != null && devKeyAlias != null && devKeyPassword != null) {
+            create("dev") {
+                storeFile = file(devKeystoreFile)
+                storePassword = devKeystorePassword
+                keyAlias = devKeyAlias
+                keyPassword = devKeyPassword
             }
         }
     }
@@ -72,6 +86,14 @@ android {
         getByName("debug") {
             applicationIdSuffix = ".debug"
             isDebuggable = true
+        }
+
+        create("dev") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-dev${providers.gradleProperty("devBuildNumber").orElse("local").get()}"
+            signingConfig = signingConfigs.findByName("dev") ?: signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("debug")
         }
     }
 
