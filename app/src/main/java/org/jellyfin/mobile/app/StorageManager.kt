@@ -22,6 +22,22 @@ class StorageManager(
         DocumentFile.fromTreeUri(context, it)
     }
 
+    fun findDirectory(path: String): DocumentFile? {
+        var current = getStorageLocation() ?: return null
+        for (segment in path.split('/').filter(String::isNotBlank)) {
+            current = current.findFile(segment) ?: return null
+        }
+        return current
+    }
+
+    fun findOrCreateDirectory(path: String): DocumentFile? {
+        var current = getStorageLocation() ?: return null
+        for (segment in path.split('/').filter(String::isNotBlank)) {
+            current = current.findFile(segment) ?: current.createDirectory(segment) ?: return null
+        }
+        return current
+    }
+
     fun isStorageLocationAccessible(): Boolean {
         val documentFile = getStorageLocation()
         return documentFile != null && documentFile.exists() && documentFile.canWrite()
