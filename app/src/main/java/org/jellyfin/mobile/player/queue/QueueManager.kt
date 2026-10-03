@@ -146,6 +146,7 @@ class QueueManager(
             playSessionId = download.id.toString(),
             playbackDetails = PlaybackDetails(startTime, audioStreamIndex, subtitleStreamIndex),
             remoteFileUri = mainFile.uri,
+            localSubtitleConfigurations = localSubtitleConfigurations,
         )
         startTime?.let { duration -> mediaSource.startTime = duration }
         audioStreamIndex?.let { index -> mediaSource.selectAudioStream(mediaSource.audioStreams[index]) }
@@ -154,7 +155,7 @@ class QueueManager(
         _currentMediaSource.value = mediaSource
 
         // Load new media source
-        viewModel.load(mediaSource, prepareStreams(mediaSource, localSubtitleConfigurations), playWhenReady)
+        viewModel.load(mediaSource, prepareStreams(mediaSource), playWhenReady)
 
         return null
     }
@@ -335,11 +336,12 @@ class QueueManager(
      * a [MergingMediaSource] containing the mentioned media stream and all external subtitle streams.
      */
     @CheckResult
-    private fun prepareStreams(
-        source: LocalJellyfinMediaSource,
-        subtitleConfigurations: List<MediaItem.SubtitleConfiguration> = createDownloadSubtitleConfigurations(source),
-    ): MediaSource {
-        return createDownloadVideoMediaSource(source.id, source.remoteFileUri, subtitleConfigurations)
+    private fun prepareStreams(source: LocalJellyfinMediaSource): MediaSource {
+        return createDownloadVideoMediaSource(
+            source.id,
+            source.remoteFileUri,
+            source.localSubtitleConfigurations,
+        )
     }
 
     private fun prepareStreams(source: RemoteJellyfinMediaSource): MediaSource {
@@ -435,15 +437,6 @@ class QueueManager(
                 setLanguage(stream.language)
             }.build()
         }.toList()
-    }
-
-    private fun createDownloadSubtitleConfigurations(
-        source: LocalJellyfinMediaSource,
-    ): List<MediaItem.SubtitleConfiguration> {
-        val download = downloadDao.getDownloadByItemId(source.itemId) ?: return emptyList()
-        val files = downloadDao.getFiles(download.id)
-        val mainFile = files.find { it.type == DownloadFileType.ITEM } ?: return emptyList()
-        return createDownloadSubtitleConfigurations(source.sourceInfo, mainFile.fileName, download.path, files)
     }
 
     private fun createDownloadSubtitleConfigurations(
