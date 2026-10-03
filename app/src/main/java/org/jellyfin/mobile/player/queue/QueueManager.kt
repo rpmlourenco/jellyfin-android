@@ -6,7 +6,6 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.core.net.toUri
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.source.MediaSource
@@ -139,7 +138,6 @@ class QueueManager(
             mainFileName = mainFile.fileName,
             downloadPath = download.path,
             files = files,
-            selectedSubtitleStreamIndex = subtitleStreamIndex,
         )
 
         val mediaSource = LocalJellyfinMediaSource(
@@ -457,7 +455,6 @@ class QueueManager(
         mainFileName: String,
         downloadPath: String,
         files: List<org.jellyfin.mobile.data.entity.DownloadFileEntity>,
-        selectedSubtitleStreamIndex: Int?,
     ): LocalSubtitleData {
         val itemLocation = storageManager.findDirectory(downloadPath)
         val fileNames = getDownloadSubtitleFileNames(mainFileName, sourceInfo.mediaStreams.orEmpty())
@@ -503,9 +500,6 @@ class QueueManager(
                 setLabel(stream.displayTitle.orEmpty())
                 setMimeType(mimeType)
                 setLanguage(stream.language)
-                if (stream.index == selectedSubtitleStreamIndex) {
-                    setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                }
             }.build()
         }
 
@@ -539,9 +533,6 @@ class QueueManager(
                 setLabel(language?.uppercase() ?: "SRT")
                 setMimeType(MimeTypes.APPLICATION_SUBRIP)
                 setLanguage(language)
-                if (streamIndex == selectedSubtitleStreamIndex) {
-                    setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                }
             }.build()
         }
 
