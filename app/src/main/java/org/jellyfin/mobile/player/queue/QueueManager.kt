@@ -9,10 +9,8 @@ import androidx.lifecycle.MutableLiveData
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
-import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
-import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jellyfin.mobile.app.StorageManager
@@ -562,26 +560,10 @@ class QueueManager(
             .setMediaId(mediaSourceId)
             .setUri(fileUri)
             .setCustomCacheKey(fileUri.toString())
+            .setSubtitleConfigurations(subtitleConfigurations)
             .build()
 
-        val videoSource = factory.createMediaSource(mediaItem)
-        if (subtitleConfigurations.isEmpty()) return videoSource
-
-        // Local SAF/content:// sidecars are loaded explicitly rather than through the
-        // cached DefaultMediaSourceFactory subtitle path. This mirrors Media3's legacy
-        // sideloaded-subtitle implementation and ensures the ContentResolver is used
-        // directly for local SRT files.
-        val subtitleFactory = SingleSampleMediaSource.Factory(get<DataSource.Factory>())
-            .setTreatLoadErrorsAsEndOfStream(false)
-        val subtitleSources = subtitleConfigurations.map { configuration ->
-            subtitleFactory.createMediaSource(configuration, C.TIME_UNSET)
-        }
-
-        return MergingMediaSource(
-            true,
-            true,
-            *(listOf(videoSource) + subtitleSources).toTypedArray(),
-        )
+        return factory.createMediaSource(mediaItem)
     }
 
     /**
