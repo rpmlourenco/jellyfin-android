@@ -85,15 +85,16 @@ class DownloadManager(
     }
 
     private fun buildDownloadPath(item: BaseItemDto): String {
-        val itemFolder = sanitizePathComponent(item.name ?: item.id.toString())
-        if (item.type != BaseItemKind.EPISODE || item.seriesName.isNullOrBlank()) return itemFolder
+        if (item.type != BaseItemKind.EPISODE || item.seriesName.isNullOrBlank()) {
+            return sanitizePathComponent(item.name ?: item.id.toString())
+        }
 
         val seriesFolder = sanitizePathComponent(item.seriesName!!)
         val seasonFolder = item.parentIndexNumber
             ?.let { season -> "Season ${season.toString().padStart(2, '0')}" }
             ?: "Season"
 
-        return "$seriesFolder/$seasonFolder/$itemFolder"
+        return "$seriesFolder/$seasonFolder"
     }
 
     private fun sanitizePathComponent(value: String): String =
