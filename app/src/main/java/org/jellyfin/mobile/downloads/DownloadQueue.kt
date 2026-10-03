@@ -16,6 +16,7 @@ import org.jellyfin.sdk.api.client.extensions.imageApi
 import org.jellyfin.sdk.api.client.extensions.libraryApi
 import org.jellyfin.sdk.model.api.ImageFormat
 import org.jellyfin.sdk.model.api.ImageType
+import org.jellyfin.sdk.model.api.MediaStreamType
 import java.io.IOException
 
 class DownloadQueue(
@@ -130,9 +131,7 @@ class DownloadQueue(
     }
 
     private suspend fun prepareFiles(api: ApiClient, downloadWithFiles: DownloadFiles): List<QueuedFile> {
-        val storageLocation = storageManager.getStorageLocation()
-        val itemLocation = storageLocation?.findFile(downloadWithFiles.download.path)
-            ?: storageLocation?.createDirectory(downloadWithFiles.download.path)
+        val itemLocation = storageManager.findOrCreateDirectory(downloadWithFiles.download.path)
             ?: error("Unable to find or create folder ${downloadWithFiles.download.path}")
 
         return buildList {
@@ -141,6 +140,9 @@ class DownloadQueue(
 
             // Add main item second as it is (often) the largest and important file
             prepareMainFile(api, downloadWithFiles, itemLocation).let(::add)
+
+            // Download external SRT files for offline playback.
+            addAll(prepareSubtitleFiles(api, downloadWithFiles, itemLocation))
         }
     }
 
@@ -158,6 +160,37 @@ class DownloadQueue(
         ),
         remoteUri = api.libraryApi.getDownloadUrl(downloadWithFiles.download.item.id).toUri()
     )
+
+    private suspend fun prepareSubtitleFiles(
+        api: ApiClient,
+        downloadWithFiles: DownloadFiles,
+        itemLocation: DocumentFile,
+    ): List<QueuedFile> {
+        val mediaSource = downloadWithFiles.download.item.mediaSources?.firstOrNull() ?: return emptyList()
+        val mainFileName = downloadWithFiles.download.item.path
+            ?.replace(Regex("^.*[\\\\/]"), "")
+            ?: return emptyList()
+        val fileNames = getDownloadSubtitleFileNames(mainFileName, mediaSource.mediaStreams.orEmpty())
+
+        return mediaSource.mediaStreams.orEmpty().mapNotNull { stream ->
+            if (stream.type != MediaStreamType.SUBTITLE || !stream.isExternal) return@mapNotNull null
+            if (stream.codec?.lowercase() !in setOf("srt", "subrip")) return@mapNotNull null
+
+            val fileName = fileNames[stream.index] ?: return@mapNotNull null
+            val deliveryUrl = stream.deliveryUrl ?: return@mapNotNull null
+
+            QueuedFile(
+                file = createOrUpdateFile(
+                    filter = { it.type == DownloadFileType.SUBTITLE && it.fileName.equals(fileName, ignoreCase = true) },
+                    downloadWithFiles = downloadWithFiles,
+                    itemLocation = itemLocation,
+                    type = DownloadFileType.SUBTITLE,
+                    fileName = fileName,
+                ),
+                remoteUri = api.createUrl(deliveryUrl).toUri(),
+            )
+        }
+    }
 
     private suspend fun preparePrimaryImageFile(
         api: ApiClient,
@@ -193,6 +226,22 @@ class DownloadQueue(
         val file = itemLocation.findFile(fileName)
             ?: itemLocation.createFile("", fileName)
             ?: error("Unable to create file $fileName")
+
+        if (
+            downloadFile != null &&
+            downloadFile.status == DownloadStatus.DOWNLOADED &&
+            downloadFile.size > 0L &&
+            file.exists() &&
+            file.length() == downloadFile.size
+        ) {
+            val reboundFile = downloadFile.copy(
+                type = type,
+                fileName = fileName,
+                uri = file.uri,
+            )
+            if (reboundFile != downloadFile) downloadDao.updateFile(reboundFile)
+            return reboundFile
+        }
 
         if (downloadFile != null) {
             downloadFile = downloadFile.copy(
