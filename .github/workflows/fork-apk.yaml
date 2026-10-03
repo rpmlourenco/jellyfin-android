@@ -69,7 +69,7 @@ jobs:
           tag_name: v2.7.3-dev${{ github.run_number }}
           name: Jellyfin v2.7.3-dev${{ github.run_number }}
           body: |
-            Test build for the integrated-player audio language selection fix.
+            Fork test build with upstream updates, robust audio selection, offline SRT support, and structured episode downloads.
 
             Application ID: `org.jellyfin.mobile.debug`
             This build installs alongside the official Jellyfin app and updates earlier dev builds.
