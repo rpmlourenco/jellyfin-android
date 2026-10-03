@@ -151,8 +151,12 @@ class QueueManager(
             additionalMediaStreams = localSubtitles.additionalStreams,
         )
         startTime?.let { duration -> mediaSource.startTime = duration }
-        audioStreamIndex?.let { index -> mediaSource.selectAudioStream(mediaSource.audioStreams[index]) }
-        subtitleStreamIndex?.let { index -> mediaSource.selectSubtitleStream(mediaSource.subtitleStreams[index]) }
+        audioStreamIndex?.let { index ->
+            mediaSource.audioStreams.firstOrNull { it.index == index }?.let(mediaSource::selectAudioStream)
+        }
+        subtitleStreamIndex?.let { index ->
+            mediaSource.subtitleStreams.firstOrNull { it.index == index }?.let(mediaSource::selectSubtitleStream)
+        }
 
         _currentMediaSource.value = mediaSource
 
@@ -461,22 +465,33 @@ class QueueManager(
                 stream.codec?.lowercase() in setOf("srt", "subrip")
         }
         val configurations = mutableListOf<MediaItem.SubtitleConfiguration>()
+        val additionalStreams = mutableListOf<MediaStream>()
         val usedUris = mutableSetOf<Uri>()
+
+        val sidecarFiles = itemLocation?.listFiles().orEmpty().filter { file ->
+            val name = file.name ?: return@filter false
+            if (!file.isFile || !name.endsWith(".srt", ignoreCase = true)) return@filter false
+
+            val subtitleBase = name.substringBeforeLast('.', name)
+            subtitleBase.equals(baseName, ignoreCase = true) ||
+                subtitleBase.startsWith("$baseName.", ignoreCase = true)
+        }
 
         for (stream in externalSrtStreams) {
             val mimeType = CodecHelpers.getSubtitleMimeType(stream.codec) ?: continue
-            val expectedName = fileNames[stream.index] ?: continue
+            val expectedName = fileNames[stream.index]
 
             val trackedFile = files.firstOrNull {
-                it.type == DownloadFileType.SUBTITLE && it.fileName.equals(expectedName, ignoreCase = true)
+                it.type == DownloadFileType.SUBTITLE &&
+                    (expectedName == null || it.fileName.equals(expectedName, ignoreCase = true))
             }
             val trackedDocument = trackedFile
                 ?.let { DocumentFile.fromSingleUri(viewModel.getApplication(), it.uri) }
                 ?.takeIf(DocumentFile::exists)
 
             val localFile = trackedDocument
-                ?: itemLocation?.findFile(expectedName)
-                ?: itemLocation?.findFile("$baseName.srt")?.takeIf { it.uri !in usedUris }
+                ?: expectedName?.let { expected -> sidecarFiles.firstOrNull { it.name.equals(expected, ignoreCase = true) } }
+                ?: sidecarFiles.firstOrNull { it.uri !in usedUris }
                 ?: continue
 
             usedUris += localFile.uri
@@ -488,14 +503,20 @@ class QueueManager(
             }.build()
         }
 
-        val additionalStreams = mutableListOf<MediaStream>()
-        val sameNameSidecar = itemLocation?.findFile("$baseName.srt")
-        if (sameNameSidecar != null && sameNameSidecar.exists() && sameNameSidecar.uri !in usedUris) {
-            val streamIndex = sourceInfo.mediaStreams.orEmpty().size
+        var nextStreamIndex = (sourceInfo.mediaStreams.orEmpty().maxOfOrNull { it.index } ?: -1) + 1
+        for (sidecar in sidecarFiles.filter { it.uri !in usedUris }) {
+            val fileName = sidecar.name.orEmpty()
+            val subtitleBase = fileName.substringBeforeLast('.', fileName)
+            val language = subtitleBase
+                .removePrefix(baseName)
+                .removePrefix(".")
+                .takeIf { it.isNotBlank() }
+
+            val streamIndex = nextStreamIndex++
             additionalStreams += MediaStream(
                 codec = "srt",
-                language = null,
-                displayTitle = "SRT",
+                language = language,
+                displayTitle = language?.uppercase() ?: "SRT",
                 isInterlaced = false,
                 isDefault = false,
                 isForced = false,
@@ -507,10 +528,11 @@ class QueueManager(
                 isTextSubtitleStream = true,
                 supportsExternalStream = true,
             )
-            configurations += MediaItem.SubtitleConfiguration.Builder(sameNameSidecar.uri).apply {
+            configurations += MediaItem.SubtitleConfiguration.Builder(sidecar.uri).apply {
                 setId("${ExternalSubtitleStream.ID_PREFIX}$streamIndex")
-                setLabel("SRT")
+                setLabel(language?.uppercase() ?: "SRT")
                 setMimeType(MimeTypes.APPLICATION_SUBRIP)
+                setLanguage(language)
             }.build()
         }
 
