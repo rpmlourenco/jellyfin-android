@@ -500,7 +500,6 @@ class QueueManager(
                 isDefault = false,
                 isForced = false,
                 isHearingImpaired = false,
-                isOriginal = false,
                 type = MediaStreamType.SUBTITLE,
                 index = streamIndex,
                 isExternal = true,
