@@ -503,6 +503,9 @@ class QueueManager(
                 setLabel(stream.displayTitle.orEmpty())
                 setMimeType(mimeType)
                 setLanguage(stream.language)
+                if (stream.index == selectedSubtitleStreamIndex) {
+                    setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                }
             }.build()
         }
 
